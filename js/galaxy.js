@@ -5,6 +5,83 @@
 	const W = canvas.width;
 	const H = canvas.height;
 
+	// Sound system
+	let audioContext = null;
+	let soundEnabled = false; // Sound off by default
+	const soundIconSize = 24;
+	const soundIconX = W - 40;
+	const soundIconY = 30;
+
+	function initAudio() {
+		if (!audioContext) {
+			audioContext = new (window.AudioContext || window.webkitAudioContext)();
+		}
+		// Resume context if suspended (required for some browsers)
+		if (audioContext.state === 'suspended') {
+			audioContext.resume();
+		}
+	}
+
+	function playLaserSound() {
+		if (!audioContext || !soundEnabled) return;
+
+		const oscillator = audioContext.createOscillator();
+		const gainNode = audioContext.createGain();
+
+		oscillator.connect(gainNode);
+		gainNode.connect(audioContext.destination);
+
+		// Laser sound: quick frequency sweep from high to low
+		oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+		oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.1);
+
+		// Quick attack and decay
+		gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+		gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01);
+		gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
+
+		oscillator.type = 'sawtooth';
+		oscillator.start(audioContext.currentTime);
+		oscillator.stop(audioContext.currentTime + 0.1);
+	}
+
+	function playExplosionSound() {
+		if (!audioContext || !soundEnabled) return;
+
+		// Create noise for explosion effect
+		const bufferSize = audioContext.sampleRate * 0.3; // 0.3 seconds
+		const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+		const data = buffer.getChannelData(0);
+
+		// Generate noise
+		for (let i = 0; i < bufferSize; i++) {
+			data[i] = (Math.random() - 0.5) * 2;
+		}
+
+		const noiseSource = audioContext.createBufferSource();
+		noiseSource.buffer = buffer;
+
+		// Filter for more explosive sound
+		const filter = audioContext.createBiquadFilter();
+		filter.type = 'lowpass';
+		filter.frequency.setValueAtTime(1000, audioContext.currentTime);
+		filter.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.3);
+
+		const gainNode = audioContext.createGain();
+
+		noiseSource.connect(filter);
+		filter.connect(gainNode);
+		gainNode.connect(audioContext.destination);
+
+		// Explosion envelope: quick attack, slower decay
+		gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+		gainNode.gain.linearRampToValueAtTime(0.5, audioContext.currentTime + 0.01);
+		gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.3);
+
+		noiseSource.start(audioContext.currentTime);
+		noiseSource.stop(audioContext.currentTime + 0.3);
+	}
+
 	// Player ship
 	const player = {
 		x: W / 2,
@@ -51,6 +128,7 @@
 		fireInterval = setInterval(() => {
 			if (!gameOver) {
 				shots.push({ x: player.x, y: player.y - player.h/2 });
+				playLaserSound();
 			}
 		}, 500);
 	}
@@ -62,6 +140,78 @@
 	// Score
 	let score = 0;
 	let gameOver = false;
+
+	function drawSoundIcon() {
+		ctx.save();
+		ctx.translate(soundIconX, soundIconY);
+
+		if (soundEnabled) {
+			// Sound ON icon - speaker with sound waves
+			// Speaker base
+			ctx.beginPath();
+			ctx.rect(-6, -4, 4, 8);
+			ctx.fillStyle = '#0ff';
+			ctx.fill();
+
+			// Speaker cone
+			ctx.beginPath();
+			ctx.moveTo(-2, -6);
+			ctx.lineTo(4, -10);
+			ctx.lineTo(4, 10);
+			ctx.lineTo(-2, 6);
+			ctx.closePath();
+			ctx.fillStyle = '#0ff';
+			ctx.fill();
+
+			// Sound waves
+			ctx.strokeStyle = '#0ff';
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			ctx.arc(4, 0, 6, -Math.PI/3, Math.PI/3);
+			ctx.stroke();
+			ctx.beginPath();
+			ctx.arc(4, 0, 10, -Math.PI/4, Math.PI/4);
+			ctx.stroke();
+		} else {
+			// Sound OFF icon - speaker with X
+			// Speaker base
+			ctx.beginPath();
+			ctx.rect(-6, -4, 4, 8);
+			ctx.fillStyle = '#666';
+			ctx.fill();
+
+			// Speaker cone
+			ctx.beginPath();
+			ctx.moveTo(-2, -6);
+			ctx.lineTo(4, -10);
+			ctx.lineTo(4, 10);
+			ctx.lineTo(-2, 6);
+			ctx.closePath();
+			ctx.fillStyle = '#666';
+			ctx.fill();
+
+			// X mark
+			ctx.strokeStyle = '#f44';
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			ctx.moveTo(6, -6);
+			ctx.lineTo(12, 6);
+			ctx.moveTo(12, -6);
+			ctx.lineTo(6, 6);
+			ctx.stroke();
+		}
+
+		// Clickable area indicator (subtle border)
+		ctx.strokeStyle = soundEnabled ? '#0ff' : '#666';
+		ctx.lineWidth = 1;
+		ctx.globalAlpha = 0.3;
+		ctx.beginPath();
+		ctx.rect(-soundIconSize/2, -soundIconSize/2, soundIconSize, soundIconSize);
+		ctx.stroke();
+		ctx.globalAlpha = 1;
+
+		ctx.restore();
+	}
 
 	function drawPlayer() {
 	ctx.save();
@@ -283,6 +433,7 @@
 					aliens.splice(i, 1);
 					shots.splice(j, 1);
 					score += 10;
+					playExplosionSound();
 					break;
 				}
 			}
@@ -322,6 +473,9 @@
 		ctx.fillText('Score: ' + score, 16, 32);
 		ctx.restore();
 
+		// Sound icon
+		drawSoundIcon();
+
 		if (gameOver) {
 			ctx.save();
 			ctx.fillStyle = '#f44';
@@ -354,15 +508,33 @@
 	}
 
 	document.addEventListener('keydown', function(e) {
+		initAudio(); // Initialize audio on user interaction
 		if (gameOver) {
 			restartGame();
 		}
 	});
 	canvas.addEventListener('mousedown', function(e) {
+		const rect = canvas.getBoundingClientRect();
+		const clickX = e.clientX - rect.left;
+		const clickY = e.clientY - rect.top;
+
+		// Check if click is on sound icon
+		if (Math.abs(clickX - soundIconX) <= soundIconSize/2 && 
+		    Math.abs(clickY - soundIconY) <= soundIconSize/2) {
+			initAudio(); // Initialize audio context if needed
+			soundEnabled = !soundEnabled;
+			return; // Don't restart game if clicking sound icon
+		}
+
+		initAudio(); // Initialize audio on user interaction
 		if (gameOver) {
 			restartGame();
 		}
 	});
+
+	// Initialize audio on any user interaction
+	canvas.addEventListener('click', initAudio);
+	document.addEventListener('keypress', initAudio);
 
 	// Start game
 	startAutoFire();
